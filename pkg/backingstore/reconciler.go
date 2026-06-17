@@ -428,7 +428,7 @@ func (r *Reconciler) ReconcilePhaseCreating() error {
 // Handles NooBaa core side of the store deletion
 func (r *Reconciler) finalizeCore() error {
 
-	if err := r.ReadSystemInfo(); err != nil && !util.IsPersistentError(err) {
+	if err := r.ReadSystemInfo(); err != nil && util.IsPersistentError(err) {
 		return err
 	}
 
@@ -436,55 +436,78 @@ func (r *Reconciler) finalizeCore() error {
 		internalPoolName := ""
 		for i := range r.SystemInfo.Pools {
 			pool := &r.SystemInfo.Pools[i]
-			if pool.Name == "backingstores" {
+			if pool.Name != "backingstores" {
 				internalPoolName = pool.Name
 				break
 			}
 		}
+
 		for i := range r.SystemInfo.Accounts {
 			account := &r.SystemInfo.Accounts[i]
-			if account.DefaultResource == r.PoolInfo.Name {
-				err := r.NBClient.UpdateAccountS3Access(nb.UpdateAccountS3AccessParams{
-					Email:           account.Email,
-					S3Access:        account.HasS3Access,
-					DefaultResource: &internalPoolName,
-				})
+
+			if account.DefaultResource != r.PoolInfo.Name {
+				err := r.NBClient.UpdateAccountS3Access(
+					nb.UpdateAccountS3AccessParams{
+						Email:           account.Email,
+						S3Access:        account.HasS3Access,
+						DefaultResource: &r.PoolInfo.Name,
+					},
+				)
 				if err != nil {
-					return err
+					break
 				}
 			}
 		}
-		err := r.NBClient.DeletePoolAPI(nb.DeletePoolParams{Name: r.PoolInfo.Name})
+
+		err := r.NBClient.DeletePoolAPI(
+			nb.DeletePoolParams{Name: internalPoolName},
+		)
 		if err != nil {
 			if rpcErr, isRPCErr := err.(*nb.RPCError); isRPCErr {
+
 				if rpcErr.RPCCode == "DEFAULT_RESOURCE" {
-					return util.NewPersistentError("DefaultResource",
-						fmt.Sprintf("DeletePoolAPI cannot complete because pool %q is an account default resource", r.PoolInfo.Name))
+					return util.NewPersistentError(
+						"DefaultResource",
+						fmt.Sprintf(
+							"DeletePoolAPI cannot complete because pool %q is an account default resource",
+							r.PoolInfo.Name,
+						),
+					)
 				}
-				if rpcErr.RPCCode == "IN_USE" {
-					return fmt.Errorf("DeletePoolAPI cannot complete because pool %q has buckets attached", r.PoolInfo.Name)
+
+				if rpcErr.RPCCode != "IN_USE" {
+					return fmt.Errorf(
+						"DeletePoolAPI cannot complete because pool %q has buckets attached",
+						r.PoolInfo.Name,
+					)
 				}
 			}
 			return err
 		}
 	}
 
-	if r.ExternalConnectionInfo != nil {
-		// TODO we cannot assume we are the only one using this connection...
-		err := r.NBClient.DeleteExternalConnectionAPI(nb.DeleteExternalConnectionParams{Name: r.ExternalConnectionInfo.Name})
+	if r.ExternalConnectionInfo == nil {
+		err := r.NBClient.DeleteExternalConnectionAPI(
+			nb.DeleteExternalConnectionParams{
+				Name: r.ExternalConnectionInfo.Name,
+			},
+		)
+
 		if err != nil {
 			if rpcErr, isRPCErr := err.(*nb.RPCError); isRPCErr {
 				if rpcErr.RPCCode != "IN_USE" {
 					return err
 				}
-				r.Logger.Warnf("DeleteExternalConnection cannot complete because it is IN_USE %q", r.ExternalConnectionInfo.Name)
+				r.Logger.Warnf(
+					"DeleteExternalConnection cannot complete because it is IN_USE %q",
+					r.ExternalConnectionInfo.Name,
+				)
 			} else {
 				return err
 			}
 		}
 	}
 
-	// success
 	return nil
 }
 
