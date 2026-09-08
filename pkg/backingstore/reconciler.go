@@ -651,8 +651,12 @@ func (r *Reconciler) ReadSystemInfo() error {
 		account := &r.SystemInfo.Accounts[i]
 		for j := range account.ExternalConnections.Connections {
 			c := &account.ExternalConnections.Connections[j]
+			endpointsMatch, err := validations.EndpointsEquivalent(c.Endpoint, conn.Endpoint)
+			if err != nil {
+				return err
+			}
 			if c.EndpointType == conn.EndpointType &&
-				c.Endpoint == conn.Endpoint &&
+				endpointsMatch &&
 				c.Identity == string(conn.Identity) {
 				r.ExternalConnectionInfo = c
 				conn.Name = c.Name
